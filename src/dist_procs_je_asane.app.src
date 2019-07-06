@@ -1,0 +1,40 @@
+{application, dist_procs_je_asane,
+ [{description, "An OTP application"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {mod, {dist_procs_je_asane_app, []}},
+  {
+    env,
+    [
+      {
+        pools,
+        [
+          {
+            poolsatu,
+            [{size, 10}, {max_overflow, 10}],
+            [{dbhost, "localhost"}, {dbname, "tailor"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]
+          },
+          {
+            pooldua,
+            [{size, 5}, {max_overflow, 5}],
+            [{dbhost, "localhost"}, {dbname, "tailor"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]
+          }
+        ]
+      }
+    ]
+  },
+  {applications,
+   [kernel,
+    stdlib,
+    sasl,
+    crypto,
+    ssl,
+    wx,
+    observer
+   ]},
+  {env,[]},
+  {modules, [order_manager]},
+
+  {licenses, ["Apache 2.0"]},
+  {links, []}
+ ]}.
