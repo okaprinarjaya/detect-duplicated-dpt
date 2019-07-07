@@ -11,7 +11,7 @@
   code_change/3
 ]).
 
--record(state, {hostname, database, username, password, rows, the_order_offset}).
+-record(state, {hostname, database, username, password, rows, rows_received, the_order_page}).
 
 start_link(Args) ->
   gen_server:start_link(?MODULE, Args, []).
@@ -25,20 +25,22 @@ init(Args) ->
   {ok, #state{
     hostname = Hostname, database = Database,
     username = Username, password = Password,
-    the_order_offset = 0
+    the_order_page = 0
   }}.
 
 handle_call(get_state, _From, State) ->
   #state{
     rows=Rows,
-    the_order_offset=TheOrderOffset,
+    rows_received=RowsReceived,
+    the_order_page=TheOrderPage,
     hostname = Hostname,
     database = Database,
     username = Username,
     password = Password
   } = State,
   Reply = {ok, [
-    {rows, Rows}, {the_order_offset, TheOrderOffset},
+    {rows, Rows}, {rows_received, RowsReceived},
+    {the_order_page, TheOrderPage},
     {hostname, Hostname}, {database, Database},
     {username, Username}, {password, Password}
   ]},
@@ -68,22 +70,28 @@ handle_cast({distribute_data, Page}, State) ->
   {ok, _, Rows} = mysql:query(DbConn, "SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, 160", [OffsetStart]),
   ok = mysql:stop(DbConn),
 
-  {noreply, State#state{rows=Rows}};
+  {noreply, State#state{
+    hostname = undefined, database = undefined,
+    username = undefined, password = undefined,
+    rows=Rows
+  }};
 
-handle_cast({receive_initial_order, Ref, TotalOrders, _InitialOrders}, State) ->
-  #state{the_order_offset=TheOrderOffset} = State,
-  order_manager:next_order(self(), Ref, TotalOrders, TheOrderOffset + 5),
+handle_cast({receive_initial_order, Ref, TotalTheOrders, InitialTheOrders}, State) ->
+  #state{the_order_page=TheOrderPage} = State,
+  RowsReceived = length(InitialTheOrders),
+  order_manager:next_order(self(), Ref, TheOrderPage + 1, TotalTheOrders, RowsReceived),
 
-  {noreply, State#state{the_order_offset = TheOrderOffset + 5}};
+  {noreply, State#state{the_order_page = TheOrderPage + 1, rows_received = RowsReceived}};
 
-handle_cast({next_order, Ref, TotalOrders, NextOrders}, State) ->
-  #state{the_order_offset = TheOrderOffset} = State,
-  order_manager:next_order(self(), Ref, TotalOrders, TheOrderOffset + length(NextOrders)),
+handle_cast({next_order, Ref, TotalTheOrders, NextTheOrders}, State) ->
+  #state{the_order_page = TheOrderPage, rows_received = RowsReceived} = State,
+  RowsReceivedNext = RowsReceived + length(NextTheOrders),
+  order_manager:next_order(self(), Ref, TheOrderPage + 1, TotalTheOrders, RowsReceivedNext),
 
-  {noreply, State#state{the_order_offset = TheOrderOffset + 5}};
+  {noreply, State#state{the_order_page = TheOrderPage + 1, rows_received = RowsReceivedNext}};
 
 handle_cast(reset_state, State) ->
-  {noreply, State#state{the_order_offset = 0}};
+  {noreply, State#state{the_order_page = 0, rows_received = 0}};
 
 handle_cast(_Msg, State) ->
   {noreply, State}.

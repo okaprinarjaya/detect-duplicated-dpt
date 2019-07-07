@@ -1,14 +1,15 @@
 -module(order_manager).
 -behaviour(gen_server).
 
--export([start_link/0, create_order/1, cast_order/1, next_order/4, initiate_worker_data/1]).
+-export([start_link/0, create_order/1, cast_order/1, next_order/5, initiate_worker_data/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(SRV, order_manager_srv).
 -define(POOL_ARGS(PoolName), [{name, {local, PoolName}}, {worker_module, worker}, {size, 10}, {max_overflow, 0}]).
 -define(WORKER_ARGS, [{dbhost, "localhost"}, {dbname, "dpt_in_da_house"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]).
 -define(TOTAL_ROWS, 1600).
--define(ROWS_PER_PAGE, 160).
+-define(DISTRIBUTE_ROWS_PER_PAGE, 160).
+-define(THE_ORDER_ROWS_PER_PAGE, 5).
 
 -record(state, {conn, orders}).
 
@@ -19,15 +20,15 @@ create_order(OrderName) ->
   gen_server:call(?SRV, {create_order, OrderName}).
 
 initiate_worker_data(PoolName) ->
-  TotalPages = ceil(?TOTAL_ROWS / ?ROWS_PER_PAGE),
+  TotalPages = ceil(?TOTAL_ROWS / ?DISTRIBUTE_ROWS_PER_PAGE),
   Pages = lists:seq(0, TotalPages - 1),
   gen_server:cast(?SRV, {initiate_worker_data, PoolName, Pages}).
 
 cast_order(PoolName) ->
   gen_server:call(?SRV, {cast_order, PoolName}).
 
-next_order(WorkerPid, Ref, TotalOrders, TotalRowsReceived) ->
-  gen_server:cast(?SRV, {next_order, WorkerPid, Ref, TotalOrders, TotalRowsReceived}).
+next_order(WorkerPid, Ref, TheOrderPage, TotalTheOrders, TotalTheOrdersReceived) ->
+  gen_server:cast(?SRV, {next_order, WorkerPid, Ref, TheOrderPage, TotalTheOrders, TotalTheOrdersReceived}).
 
 distribute_data(_PoolName, []) ->
   ok;
@@ -44,19 +45,19 @@ distribute_data(PoolName, Pages) ->
   end),
   distribute_data(PoolName, TailPages).
 
-buzz(_N, 11, _PoolName, _TotalOrders, _InitialOrders) ->
+buzz(_N, 11, _PoolName, _TotalTheOrders, _InitialTheOrders) ->
   ok;
 
-buzz(N, Incr, PoolName, TotalOrders, InitialOrders) ->
+buzz(N, Incr, PoolName, TotalTheOrders, InitialTheOrders) ->
   spawn(fun() ->
     poolboy:transaction(
       PoolName,
       fun(Worker) ->
-        gen_server:cast(Worker, {receive_initial_order, make_ref(), TotalOrders, InitialOrders})
+        gen_server:cast(Worker, {receive_initial_order, make_ref(), TotalTheOrders, InitialTheOrders})
       end
     )
   end),
-  buzz(N, Incr+1, PoolName, TotalOrders, InitialOrders).
+  buzz(N, Incr+1, PoolName, TotalTheOrders, InitialTheOrders).
 
 init(_Args) ->
   Hostname = proplists:get_value(dbhost, ?WORKER_ARGS),
@@ -87,8 +88,9 @@ handle_call({create_order, OrderName}, _From, State) ->
   {reply, ok, State};
 
 handle_call({cast_order, PoolName}, _From, #state{orders=Orders} = State) ->
-  InitialOrders = lists:sublist(Orders, 1, 5),
-  buzz(10, 1, PoolName, ?TOTAL_ROWS, InitialOrders),
+  TheOrderOffsetStart = (?THE_ORDER_ROWS_PER_PAGE * 0) + 1,
+  InitialTheOrders = lists:sublist(Orders, TheOrderOffsetStart, ?THE_ORDER_ROWS_PER_PAGE),
+  buzz(10, 1, PoolName, ?TOTAL_ROWS, InitialTheOrders),
 
   {reply, ok, State}.
 
@@ -97,14 +99,16 @@ handle_cast({initiate_worker_data, PoolName, Pages}, State) ->
 
   {noreply, State};
 
-handle_cast({next_order, WorkerPid, Ref, TotalOrders, TotalRowsReceived}, #state{orders=Orders} = State) ->
-  NextOffsetStart = TotalRowsReceived + 1,
-  if NextOffsetStart =< TotalOrders ->
-    NextOrders = lists:sublist(Orders, NextOffsetStart, 5),
-    gen_server:cast(WorkerPid, {next_order, Ref, TotalOrders, NextOrders});
+handle_cast({next_order, WorkerPid, Ref, TheOrderPage, TotalTheOrders, TotalTheOrdersReceived}, State) ->
+  #state{orders=TheOrders} = State,
+  TheOrderNextOffsetStart = (?THE_ORDER_ROWS_PER_PAGE * TheOrderPage) + 1,
+
+  if TotalTheOrdersReceived < TotalTheOrders ->
+    NextTheOrders = lists:sublist(TheOrders, TheOrderNextOffsetStart, ?THE_ORDER_ROWS_PER_PAGE),
+    gen_server:cast(WorkerPid, {next_order, Ref, TotalTheOrders, NextTheOrders});
   true ->
     gen_server:cast(WorkerPid, reset_state),
-    io:format("Worker: ~p finish. Total rows received: ~p~n", [WorkerPid, TotalRowsReceived])
+    io:format("Worker: ~p finish. Total rows received: ~p~n", [WorkerPid, TotalTheOrdersReceived])
   end,
 
   {noreply, State};

@@ -16,3 +16,6 @@ populate_dpt_ids(Rows, IdSeqs) ->
 length_worker_data(Pid) when is_pid(Pid) ->
   Rows = proplists:get_value(rows, get_worker_state(Pid)),
   length(populate_dpt_ids(Rows, [])).
+
+page_worker_data(Pid) when is_pid(Pid) ->
+  proplists:get_value(the_order_page, get_worker_state(Pid)).
