@@ -6,8 +6,8 @@
 
 -define(SRV, order_manager_srv).
 -define(POOL_ARGS(PoolName), [{name, {local, PoolName}}, {worker_module, worker}, {size, 10}, {max_overflow, 0}]).
--define(WORKER_ARGS, [{dbhost, "localhost"}, {dbname, "tailor"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]).
--define(TOTAL_ROWS, 1676).
+-define(WORKER_ARGS, [{dbhost, "localhost"}, {dbname, "dpt_in_da_house"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]).
+-define(TOTAL_ROWS, 1600).
 -define(ROWS_PER_PAGE, 160).
 
 -record(state, {conn, orders}).
@@ -59,15 +59,22 @@ buzz(N, Incr, PoolName, TotalOrders, InitialOrders) ->
   buzz(N, Incr+1, PoolName, TotalOrders, InitialOrders).
 
 init(_Args) ->
+  Hostname = proplists:get_value(dbhost, ?WORKER_ARGS),
+  Database = proplists:get_value(dbname, ?WORKER_ARGS),
+  Username = proplists:get_value(dbuser, ?WORKER_ARGS),
+  Password = proplists:get_value(dbpasswd, ?WORKER_ARGS),
+
   {ok, DbConn} = mysql:start_link([
-    {host, "localhost"},
+    {host, Hostname},
     {port, 8889},
-    {user, "mamp"},
-    {password, "12qwaszx@321"},
-    {database, "dpt_in_da_house"}
+    {user, Username},
+    {password, Password},
+    {database, Database}
   ]),
+
   {ok, _, Rows} = mysql:query(DbConn, <<"SELECT id, nama, status_dpt FROM dpt_pemilihbali">>),
   ok = mysql:stop(DbConn),
+
   {ok, #state{conn=DbConn, orders=Rows}}.
 
 handle_call({create_order, OrderName}, _From, State) ->
@@ -76,15 +83,18 @@ handle_call({create_order, OrderName}, _From, State) ->
     poolboy:child_spec(OrderName, ?POOL_ARGS(OrderName), ?WORKER_ARGS)
   ),
   link(Pid),
+
   {reply, ok, State};
 
 handle_call({cast_order, PoolName}, _From, #state{orders=Orders} = State) ->
   InitialOrders = lists:sublist(Orders, 1, 5),
   buzz(10, 1, PoolName, ?TOTAL_ROWS, InitialOrders),
+
   {reply, ok, State}.
 
 handle_cast({initiate_worker_data, PoolName, Pages}, State) ->
   distribute_data(PoolName, Pages),
+
   {noreply, State};
 
 handle_cast({next_order, WorkerPid, Ref, TotalOrders, TotalRowsReceived}, #state{orders=Orders} = State) ->
@@ -96,6 +106,7 @@ handle_cast({next_order, WorkerPid, Ref, TotalOrders, TotalRowsReceived}, #state
     gen_server:cast(WorkerPid, reset_state),
     io:format("Worker: ~p finish. Total rows received: ~p~n", [WorkerPid, TotalRowsReceived])
   end,
+
   {noreply, State};
 
 handle_cast(_Msg, State) ->
