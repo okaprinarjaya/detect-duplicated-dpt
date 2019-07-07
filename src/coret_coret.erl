@@ -10,12 +10,14 @@ populate_dpt_ids([], IdSeqs) ->
 
 populate_dpt_ids(Rows, IdSeqs) ->
   [Row | TailRows] = Rows,
-  [Id, _Nama, _StatusDPT] = Row,
-  populate_dpt_ids(TailRows, [Id | IdSeqs]).
+  [Id, Nama, _StatusDPT] = Row,
+  Concat = integer_to_list(Id) ++ binary_to_list(<<"#">>) ++ binary_to_list(Nama),
+  populate_dpt_ids(TailRows, [Concat | IdSeqs]).
 
-length_worker_data(Pid) when is_pid(Pid) ->
+detail_worker_data(Pid) when is_pid(Pid) ->
   Rows = proplists:get_value(rows, get_worker_state(Pid)),
-  length(populate_dpt_ids(Rows, [])).
+  Data = populate_dpt_ids(Rows, []),
+  {length(Data), Data}.
 
 page_worker_data(Pid) when is_pid(Pid) ->
   proplists:get_value(the_order_page, get_worker_state(Pid)).

@@ -25,7 +25,9 @@ init(Args) ->
   {ok, #state{
     hostname = Hostname, database = Database,
     username = Username, password = Password,
-    the_order_page = 0
+    the_order_page = 0,
+    rows = [],
+    rows_received = 0
   }}.
 
 handle_call(get_state, _From, State) ->
@@ -76,7 +78,7 @@ handle_cast({distribute_data, Page}, State) ->
     rows=Rows
   }};
 
-handle_cast({receive_initial_order, Ref, TotalTheOrders, InitialTheOrders}, State) ->
+handle_cast({initiate_order, Ref, TotalTheOrders, InitialTheOrders}, State) ->
   #state{the_order_page=TheOrderPage} = State,
   RowsReceived = length(InitialTheOrders),
   order_manager:next_order(self(), Ref, TheOrderPage + 1, TotalTheOrders, RowsReceived),

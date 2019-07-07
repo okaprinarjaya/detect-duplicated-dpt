@@ -1,11 +1,11 @@
 -module(order_manager).
 -behaviour(gen_server).
 
--export([start_link/0, create_order/1, cast_order/1, next_order/5, initiate_worker_data/1]).
+-export([start_link/0, create_workers/1, initiate_order/1, next_order/5, initiate_worker_data/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(SRV, order_manager_srv).
--define(POOL_ARGS(PoolName), [{name, {local, PoolName}}, {worker_module, worker}, {size, 10}, {max_overflow, 0}]).
+-define(POOL_ARGS(WorkerGroupName), [{name, {local, WorkerGroupName}}, {worker_module, worker}, {size, 10}, {max_overflow, 0}]).
 -define(WORKER_ARGS, [{dbhost, "localhost"}, {dbname, "dpt_in_da_house"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]).
 -define(TOTAL_ROWS, 1600).
 -define(DISTRIBUTE_ROWS_PER_PAGE, 160).
@@ -16,48 +16,48 @@
 start_link() ->
   gen_server:start_link({local, ?SRV}, ?MODULE, [], []).
 
-create_order(OrderName) ->
-  gen_server:call(?SRV, {create_order, OrderName}).
+create_workers(WorkerGroupName) ->
+  gen_server:call(?SRV, {create_workers, WorkerGroupName}).
 
-initiate_worker_data(PoolName) ->
+initiate_worker_data(WorkerGroupName) ->
   TotalPages = ceil(?TOTAL_ROWS / ?DISTRIBUTE_ROWS_PER_PAGE),
   Pages = lists:seq(0, TotalPages - 1),
-  gen_server:cast(?SRV, {initiate_worker_data, PoolName, Pages}).
+  gen_server:cast(?SRV, {initiate_worker_data, WorkerGroupName, Pages}).
 
-cast_order(PoolName) ->
-  gen_server:call(?SRV, {cast_order, PoolName}).
+initiate_order(WorkerGroupName) ->
+  gen_server:call(?SRV, {initiate_order, WorkerGroupName}).
 
 next_order(WorkerPid, Ref, TheOrderPage, TotalTheOrders, TotalTheOrdersReceived) ->
   gen_server:cast(?SRV, {next_order, WorkerPid, Ref, TheOrderPage, TotalTheOrders, TotalTheOrdersReceived}).
 
-distribute_data(_PoolName, []) ->
+distribute_data(_WorkerGroupName, []) ->
   ok;
 
-distribute_data(PoolName, Pages) ->
+distribute_data(WorkerGroupName, Pages) ->
   [Page|TailPages] = Pages,
   spawn(fun() ->
     poolboy:transaction(
-      PoolName,
+      WorkerGroupName,
       fun(Worker) ->
         gen_server:cast(Worker, {distribute_data, Page})
       end
     )
   end),
-  distribute_data(PoolName, TailPages).
+  distribute_data(WorkerGroupName, TailPages).
 
-buzz(_N, 11, _PoolName, _TotalTheOrders, _InitialTheOrders) ->
+distribute_initial_order(_N, 11, _WorkerGroupName, _TotalTheOrders, _InitialTheOrders) ->
   ok;
 
-buzz(N, Incr, PoolName, TotalTheOrders, InitialTheOrders) ->
+distribute_initial_order(N, Incr, WorkerGroupName, TotalTheOrders, InitialTheOrders) ->
   spawn(fun() ->
     poolboy:transaction(
-      PoolName,
+      WorkerGroupName,
       fun(Worker) ->
-        gen_server:cast(Worker, {receive_initial_order, make_ref(), TotalTheOrders, InitialTheOrders})
+        gen_server:cast(Worker, {initiate_order, make_ref(), TotalTheOrders, InitialTheOrders})
       end
     )
   end),
-  buzz(N, Incr+1, PoolName, TotalTheOrders, InitialTheOrders).
+  distribute_initial_order(N, Incr+1, WorkerGroupName, TotalTheOrders, InitialTheOrders).
 
 init(_Args) ->
   Hostname = proplists:get_value(dbhost, ?WORKER_ARGS),
@@ -78,24 +78,24 @@ init(_Args) ->
 
   {ok, #state{conn=DbConn, orders=Rows}}.
 
-handle_call({create_order, OrderName}, _From, State) ->
+handle_call({create_workers, WorkerGroupName}, _From, State) ->
   {ok, Pid} = supervisor:start_child(
     dist_procs_je_asane_sup,
-    poolboy:child_spec(OrderName, ?POOL_ARGS(OrderName), ?WORKER_ARGS)
+    poolboy:child_spec(WorkerGroupName, ?POOL_ARGS(WorkerGroupName), ?WORKER_ARGS)
   ),
   link(Pid),
 
   {reply, ok, State};
 
-handle_call({cast_order, PoolName}, _From, #state{orders=Orders} = State) ->
+handle_call({initiate_order, WorkerGroupName}, _From, #state{orders=Orders} = State) ->
   TheOrderOffsetStart = (?THE_ORDER_ROWS_PER_PAGE * 0) + 1,
   InitialTheOrders = lists:sublist(Orders, TheOrderOffsetStart, ?THE_ORDER_ROWS_PER_PAGE),
-  buzz(10, 1, PoolName, ?TOTAL_ROWS, InitialTheOrders),
+  distribute_initial_order(10, 1, WorkerGroupName, ?TOTAL_ROWS, InitialTheOrders),
 
   {reply, ok, State}.
 
-handle_cast({initiate_worker_data, PoolName, Pages}, State) ->
-  distribute_data(PoolName, Pages),
+handle_cast({initiate_worker_data, WorkerGroupName, Pages}, State) ->
+  distribute_data(WorkerGroupName, Pages),
 
   {noreply, State};
 
