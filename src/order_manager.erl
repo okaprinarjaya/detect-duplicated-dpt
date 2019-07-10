@@ -34,7 +34,7 @@ distribute_data(_WorkerGroupName, []) ->
   ok;
 
 distribute_data(WorkerGroupName, Pages) ->
-  [Page|TailPages] = Pages,
+  [Page | TailPages] = Pages,
   spawn(fun() ->
     poolboy:transaction(
       WorkerGroupName,

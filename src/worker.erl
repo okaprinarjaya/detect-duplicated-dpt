@@ -11,7 +11,12 @@
   code_change/3
 ]).
 
--record(state, {hostname, database, username, password, rows, rows_received, the_order_page}).
+-record(state, {
+  hostname, database,
+  username, password,
+  rows, rows_received,
+  the_order_page, doubled_data_found
+}).
 
 start_link(Args) ->
   gen_server:start_link(?MODULE, Args, []).
@@ -25,9 +30,8 @@ init(Args) ->
   {ok, #state{
     hostname = Hostname, database = Database,
     username = Username, password = Password,
-    the_order_page = 0,
-    rows = [],
-    rows_received = 0
+    the_order_page = 0, rows = [],
+    rows_received = 0, doubled_data_found = []
   }}.
 
 handle_call(get_state, _From, State) ->
@@ -75,19 +79,78 @@ handle_cast({distribute_data, Page}, State) ->
   {noreply, State#state{
     hostname = undefined, database = undefined,
     username = undefined, password = undefined,
-    rows=Rows
+    rows = Rows
   }};
 
 handle_cast({initiate_order, Ref, TotalTheOrders, InitialTheOrders}, State) ->
-  #state{the_order_page=TheOrderPage} = State,
+  #state{the_order_page=TheOrderPage, rows = WorkerDataDPT} = State,
   RowsReceived = length(InitialTheOrders),
+
+  lists:foreach(
+    fun(ElemTheOrder) ->
+      [IdTheOrder, NamaTheOrder, _] = ElemTheOrder,
+      lists:foreach(
+        fun(ElemGalaxy) ->
+          [IdGalaxy, NamaGalaxy, _] = ElemGalaxy,
+
+          if IdTheOrder =/= IdGalaxy andalso NamaTheOrder =/= <<>> andalso NamaGalaxy =/= <<>>  ->
+            CompareLen = binary:longest_common_prefix([NamaTheOrder, NamaGalaxy]),
+            BLen = byte_size(NamaGalaxy),
+            Similarity = (CompareLen / BLen) * 100,
+
+            if Similarity > 90 ->
+              io:format("Double data detected! - (~p) is similar with (~p) found at: ~p~n", [NamaTheOrder, NamaGalaxy, self()]);
+              true -> ok
+            end;
+
+            true -> ok
+          end
+
+        end,
+        WorkerDataDPT
+      )
+    end,
+    InitialTheOrders
+  ),
+
   order_manager:next_order(self(), Ref, TheOrderPage + 1, TotalTheOrders, RowsReceived),
 
   {noreply, State#state{the_order_page = TheOrderPage + 1, rows_received = RowsReceived}};
 
 handle_cast({next_order, Ref, TotalTheOrders, NextTheOrders}, State) ->
-  #state{the_order_page = TheOrderPage, rows_received = RowsReceived} = State,
+  #state{
+    the_order_page = TheOrderPage, rows = WorkerDataDPT,
+    rows_received = RowsReceived
+  } = State,
   RowsReceivedNext = RowsReceived + length(NextTheOrders),
+
+  lists:foreach(
+    fun(ElemTheOrder) ->
+      [IdTheOrder, NamaTheOrder, _] = ElemTheOrder,
+      lists:foreach(
+        fun(ElemGalaxy) ->
+          [IdGalaxy, NamaGalaxy, _] = ElemGalaxy,
+
+          if IdTheOrder =/= IdGalaxy andalso NamaTheOrder =/= <<>> andalso NamaGalaxy =/= <<>>  ->
+            CompareLen = binary:longest_common_prefix([NamaTheOrder, NamaGalaxy]),
+            BLen = byte_size(NamaGalaxy),
+            Similarity = (CompareLen / BLen) * 100,
+
+            if Similarity > 90 ->
+              io:format("Double data detected! - (~p) is similar with (~p) found at: ~p~n", [NamaTheOrder, NamaGalaxy, self()]);
+              true -> ok
+            end;
+
+            true -> ok
+          end
+
+        end,
+        WorkerDataDPT
+      )
+    end,
+    NextTheOrders
+  ),
+
   order_manager:next_order(self(), Ref, TheOrderPage + 1, TotalTheOrders, RowsReceivedNext),
 
   {noreply, State#state{the_order_page = TheOrderPage + 1, rows_received = RowsReceivedNext}};
