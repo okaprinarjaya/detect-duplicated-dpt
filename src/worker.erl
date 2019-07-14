@@ -11,9 +11,11 @@
   code_change/3
 ]).
 
+-define(DISTRIBUTE_ROWS_PER_PAGE, 4000).
+% -define(QUERY_STR, <<"SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, ?">>).
+-define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
+
 -record(state, {
-  hostname, database,
-  username, password,
   rows, rows_received,
   the_order_page, doubled_data_found
 }).
@@ -21,15 +23,8 @@
 start_link(Args) ->
   gen_server:start_link(?MODULE, Args, []).
 
-init(Args) ->
-  Hostname = proplists:get_value(dbhost, Args),
-  Database = proplists:get_value(dbname, Args),
-  Username = proplists:get_value(dbuser, Args),
-  Password = proplists:get_value(dbpasswd, Args),
-
+init(_Args) ->
   {ok, #state{
-    hostname = Hostname, database = Database,
-    username = Username, password = Password,
     the_order_page = 0, rows = [],
     rows_received = 0, doubled_data_found = []
   }}.
@@ -38,17 +33,11 @@ handle_call(get_state, _From, State) ->
   #state{
     rows=Rows,
     rows_received=RowsReceived,
-    the_order_page=TheOrderPage,
-    hostname = Hostname,
-    database = Database,
-    username = Username,
-    password = Password
+    the_order_page=TheOrderPage
   } = State,
   Reply = {ok, [
     {rows, Rows}, {rows_received, RowsReceived},
-    {the_order_page, TheOrderPage},
-    {hostname, Hostname}, {database, Database},
-    {username, Username}, {password, Password}
+    {the_order_page, TheOrderPage}
   ]},
 
   {reply, Reply, State};
@@ -56,29 +45,11 @@ handle_call(get_state, _From, State) ->
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
 
-handle_cast({distribute_data, Page}, State) ->
-  #state{
-    hostname = Hostname,
-    database = Database,
-    username = Username,
-    password = Password
-  } = State,
-
-  {ok, DbConn} = mysql:start_link([
-    {host, Hostname},
-    {port, 8889},
-    {user, Username},
-    {password, Password},
-    {database, Database}
-  ]),
-
-  OffsetStart = 160 * Page,
-  {ok, _, Rows} = mysql:query(DbConn, "SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, 160", [OffsetStart]),
-  ok = mysql:stop(DbConn),
+handle_cast({distribute_data, DbConn, Page}, State) ->
+  OffsetStart = ?DISTRIBUTE_ROWS_PER_PAGE * Page,
+  {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [OffsetStart, ?DISTRIBUTE_ROWS_PER_PAGE]),
 
   {noreply, State#state{
-    hostname = undefined, database = undefined,
-    username = undefined, password = undefined,
     rows = Rows
   }};
 
@@ -88,12 +59,12 @@ handle_cast({initiate_order, Ref, TotalTheOrders, InitialTheOrders}, State) ->
 
   lists:foreach(
     fun(ElemTheOrder) ->
-      [IdTheOrder, NamaTheOrder, _] = ElemTheOrder,
+      [_IdTheOrder, NamaTheOrder, _] = ElemTheOrder,
       lists:foreach(
         fun(ElemGalaxy) ->
-          [IdGalaxy, NamaGalaxy, _] = ElemGalaxy,
+          [_IdGalaxy, NamaGalaxy, _] = ElemGalaxy,
 
-          if IdTheOrder =/= IdGalaxy andalso NamaTheOrder =/= <<>> andalso NamaGalaxy =/= <<>>  ->
+          if NamaTheOrder =/= <<>> andalso NamaGalaxy =/= <<>> andalso NamaTheOrder =/= NamaGalaxy  ->
             CompareLen = binary:longest_common_prefix([NamaTheOrder, NamaGalaxy]),
             BLen = byte_size(NamaGalaxy),
             Similarity = (CompareLen / BLen) * 100,
@@ -115,6 +86,9 @@ handle_cast({initiate_order, Ref, TotalTheOrders, InitialTheOrders}, State) ->
 
   order_manager:next_order(self(), Ref, TheOrderPage + 1, TotalTheOrders, RowsReceived),
 
+  io:format("Rows received: ~p~n", [RowsReceived]),
+  io:format("End at: ~p~n", [calendar:local_time()]),
+
   {noreply, State#state{the_order_page = TheOrderPage + 1, rows_received = RowsReceived}};
 
 handle_cast({next_order, Ref, TotalTheOrders, NextTheOrders}, State) ->
@@ -126,12 +100,12 @@ handle_cast({next_order, Ref, TotalTheOrders, NextTheOrders}, State) ->
 
   lists:foreach(
     fun(ElemTheOrder) ->
-      [IdTheOrder, NamaTheOrder, _] = ElemTheOrder,
+      [_IdTheOrder, NamaTheOrder, _] = ElemTheOrder,
       lists:foreach(
         fun(ElemGalaxy) ->
-          [IdGalaxy, NamaGalaxy, _] = ElemGalaxy,
+          [_IdGalaxy, NamaGalaxy, _] = ElemGalaxy,
 
-          if IdTheOrder =/= IdGalaxy andalso NamaTheOrder =/= <<>> andalso NamaGalaxy =/= <<>>  ->
+          if NamaTheOrder =/= NamaGalaxy andalso NamaTheOrder =/= <<>> andalso NamaGalaxy =/= <<>>  ->
             CompareLen = binary:longest_common_prefix([NamaTheOrder, NamaGalaxy]),
             BLen = byte_size(NamaGalaxy),
             Similarity = (CompareLen / BLen) * 100,
