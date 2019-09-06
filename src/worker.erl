@@ -11,7 +11,7 @@
   code_change/3
 ]).
 
--define(DISTRIBUTE_ROWS_PER_PAGE, 4000).
+-define(DISTRIBUTE_ROWS_PER_PAGE, 10000).
 % -define(QUERY_STR, <<"SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, ?">>).
 -define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
 
@@ -85,9 +85,6 @@ handle_cast({initiate_order, Ref, TotalTheOrders, InitialTheOrders}, State) ->
   ),
 
   order_manager:next_order(self(), Ref, TheOrderPage + 1, TotalTheOrders, RowsReceived),
-
-  io:format("Rows received: ~p~n", [RowsReceived]),
-  io:format("End at: ~p~n", [calendar:local_time()]),
 
   {noreply, State#state{the_order_page = TheOrderPage + 1, rows_received = RowsReceived}};
 

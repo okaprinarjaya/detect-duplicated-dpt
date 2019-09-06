@@ -41,7 +41,7 @@ test_get_worker_data() ->
     {database, Database}
   ]),
 
-  {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [0, 4000]),
+  {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [0, 125000]),
   ok = mysql:stop(DbConn),
   Rows.
 
@@ -59,7 +59,7 @@ test_get_the_orders() ->
     {database, Database}
   ]),
 
-  {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [0, 2000]),
+  {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [0, 1]),
   ok = mysql:stop(DbConn),
   Rows.
 

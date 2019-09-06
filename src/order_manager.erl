@@ -5,12 +5,12 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(SRV, order_manager_srv).
--define(POOL_ARGS(WorkerGroupName), [{name, {local, WorkerGroupName}}, {worker_module, worker}, {size, 200}, {max_overflow, 0}]).
+-define(POOL_ARGS(WorkerGroupName), [{name, {local, WorkerGroupName}}, {worker_module, worker}, {size, 100}, {max_overflow, 0}]).
 -define(WORKER_ARGS, [{dbhost, "localhost"}, {dbname, "dpt_in_da_house"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]).
--define(TOTAL_ROWS, 800000).
--define(TOTAL_ORDERS, 2000).
--define(DISTRIBUTE_ROWS_PER_PAGE, 4000).
--define(THE_ORDER_ROWS_PER_PAGE, 1).
+-define(TOTAL_ROWS, 1000000).
+-define(DISTRIBUTE_ROWS_PER_PAGE, 10000).
+-define(TOTAL_ORDERS, 10000).
+-define(THE_ORDER_ROWS_PER_PAGE, 1000).
 
 % -define(QUERY_STR, <<"SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, ?">>).
 -define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
@@ -21,7 +21,7 @@ start_link() ->
   gen_server:start_link({local, ?SRV}, ?MODULE, [], []).
 
 create_workers(WorkerGroupName) ->
-  gen_server:call(?SRV, {create_workers, WorkerGroupName}, infinity).
+  gen_server:call(?SRV, {create_workers, WorkerGroupName}).
 
 initiate_worker_data(WorkerGroupName) ->
   TotalPages = ceil(?TOTAL_ROWS / ?DISTRIBUTE_ROWS_PER_PAGE),
@@ -50,7 +50,7 @@ distribute_data(DbConn, WorkerGroupName, Pages) ->
   end),
   distribute_data(DbConn, WorkerGroupName, TailPages).
 
-distribute_initial_order(201, _WorkerGroupName, _TotalTheOrders, _InitialTheOrders) ->
+distribute_initial_order(101, _WorkerGroupName, _TotalTheOrders, _InitialTheOrders) ->
   ok;
 
 distribute_initial_order(Incr, WorkerGroupName, TotalTheOrders, InitialTheOrders) ->
@@ -62,7 +62,7 @@ distribute_initial_order(Incr, WorkerGroupName, TotalTheOrders, InitialTheOrders
       end
     )
   end),
-  distribute_initial_order(Incr+1, WorkerGroupName, TotalTheOrders, InitialTheOrders).
+  distribute_initial_order(Incr + 1, WorkerGroupName, TotalTheOrders, InitialTheOrders).
 
 init(_Args) ->
   Hostname = proplists:get_value(dbhost, ?WORKER_ARGS),
