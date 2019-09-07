@@ -33,7 +33,7 @@
     observer
    ]},
   {env,[]},
-  {modules, [order_manager]},
+  {modules, [oprex_order_manager]},
 
   {licenses, ["Apache 2.0"]},
   {links, []}

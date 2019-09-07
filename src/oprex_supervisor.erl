@@ -1,4 +1,4 @@
--module(dist_procs_je_asane_sup).
+-module(oprex_supervisor).
 
 -behaviour(supervisor).
 
@@ -17,5 +17,7 @@ init([]) ->
     intensity => 10,
     period => 10
   },
-  ChildSpecs = [{srv, {order_manager, start_link, []}, permanent, 5000, worker, [order_manager]}],
+  ChildSpecs = [
+    {srv, {oprex_order_manager, start_link, []}, permanent, 5000, worker, [oprex_order_manager]}
+  ],
   {ok, {SupFlags, ChildSpecs}}.
