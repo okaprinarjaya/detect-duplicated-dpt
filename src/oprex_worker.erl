@@ -1,4 +1,4 @@
--module(worker).
+-module(oprex_worker).
 -behaviour(gen_server).
 
 -export([start_link/1]).
