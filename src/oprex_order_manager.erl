@@ -10,13 +10,13 @@
 
 -define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
 
--record(state, {procs_pids = [], procs_refs = [], orders = [], rows_per_batch = 0}).
+-record(state, {procs_pids = [], procs_refs = [], orders = [], orders_len = 0, rows_per_batch = 0}).
 
 start_link() ->
   gen_server:start_link({local, ?SRV}, ?MODULE, [], []).
 
 init(_Args) ->
-  MFA = {test_worker_server, start_link, []},
+  MFA = {oprex_worker, start_link, []},
   gen_server:cast(self(), {start_oprex_worker_supervisor, MFA}),
 
   {ok, #state{procs_pids = [], procs_refs = [], orders = []}}.
@@ -37,45 +37,44 @@ handle_cast({start_oprex_worker_supervisor, {M, F, A}}, State) ->
 
   {noreply, State};
 
-handle_cast({run_orders, RowsPerBatch}, #state{orders = OrdersCurrent, procs_pids = WorkersCurrent} = State) ->
-  OrdersSubmit = lists:sublist(OrdersCurrent, 1, RowsPerBatch),
+handle_cast({run_orders, RowsPerBatch}, #state{orders = Orders, procs_pids = Workers} = State) ->
+  OrdersSubmit = lists:sublist(Orders, 1, RowsPerBatch),
   lists:foreach(
     fun(WorkerPid) ->
       gen_server:cast(WorkerPid, {initial_orders, make_ref(), OrdersSubmit})
     end,
-    WorkersCurrent
+    Workers
   ),
 
   {noreply, State#state{rows_per_batch = RowsPerBatch}};
 
-handle_cast({next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceived}, State) ->
-  #state{orders = OrdersCurrent, rows_per_batch = RowsPerBatch} = State,
-  OrdersCurrentLen = length(OrdersCurrent),
+handle_cast({next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen}, State) ->
+  #state{orders = Orders, orders_len = OrdersLen, rows_per_batch = RowsPerBatch} = State,
 
   if
-    TotalOrdersReceived < OrdersCurrentLen ->
+    TotalOrdersReceivedLen < OrdersLen ->
       StartOffset = (RowsPerBatch * OrdersNextPage) + 1,
-      NextOrdersSubmit = lists:sublist(OrdersCurrent, StartOffset, RowsPerBatch),
+      NextOrdersSubmit = lists:sublist(Orders, StartOffset, RowsPerBatch),
 
-      gen_server:cast(WorkerPid, {next_order, Ref, NextOrdersSubmit});
+      gen_server:cast(WorkerPid, {next_orders, Ref, NextOrdersSubmit});
 
     true ->
       gen_server:cast(WorkerPid, reset_state),
-      io:format("Worker: ~p finish. Total rows received: ~p~n", [WorkerPid, TotalOrdersReceived])
+      io:format("Worker: ~p finish. Total rows received: ~p~n", [WorkerPid, TotalOrdersReceivedLen])
   end,
 
-  {noreply, State}.
+  {noreply, State};
 
-handle_call({create_workers, {TotalRows, RowsPerPage, StartOffset}}, _From, #state{procs_pids = PidsCurrent, procs_refs = RefsCurrent} = State) ->
+handle_cast({create_workers, {TotalRows, RowsPerPage, StartOffset}}, #state{procs_pids = ProcsPids, procs_refs = ProcsRefs} = State) ->
   TotalPages = ceil(TotalRows / RowsPerPage),
   ProcessesNew = [worker_starter(Page, RowsPerPage, StartOffset) || Page <- lists:seq(0, TotalPages - 1)],
   {PidsNew, RefsNew} = pids_refs(ProcessesNew),
 
-  {reply, ok, State#state{procs_pids = lists:append([PidsNew, PidsCurrent]), procs_refs = lists:append([RefsNew, RefsCurrent])}};
+  {noreply, State#state{procs_pids = lists:append([PidsNew, ProcsPids]), procs_refs = lists:append([RefsNew, ProcsRefs])}}.
 
-handle_call({create_orders, TotalOrders}, _From, #state{orders = OrdersCurrent} = State) ->
+handle_call({create_orders, TotalOrders}, _From, #state{orders = Orders} = State) ->
   if
-    length(OrdersCurrent) < 1 ->
+    length(Orders) < 1 ->
       {ok, DbCredentials} = application:get_env(dist_procs_je_asane, dbcredentials),
       DbHost = proplists:get_value(dbhost, DbCredentials),
       DbName = proplists:get_value(dbname, DbCredentials),
@@ -93,7 +92,7 @@ handle_call({create_orders, TotalOrders}, _From, #state{orders = OrdersCurrent} 
       {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [0, TotalOrders]),
       ok = mysql:stop(DbConn),
 
-      {reply, {ok, <<"Orders populated">>}, State#state{orders = Rows}};
+      {reply, {ok, <<"Orders populated">>}, State#state{orders = Rows, orders_len = length(Rows)}};
 
     true ->
       {reply, {ok, <<"Orders not empty. Please empty the orders first">>}, State}
@@ -126,16 +125,16 @@ code_change(_OldVsn, State, _Extra) ->
 -spec create_workers(TotalRows :: integer(), RowsPerPage :: integer(), StartOffset :: integer()) -> ok.
 
 create_workers(TotalRows, RowsPerPage, StartOffset) ->
-  gen_server:call(?SRV, {create_workers, {TotalRows, RowsPerPage, StartOffset}}).
+  gen_server:cast(?SRV, {create_workers, {TotalRows, RowsPerPage, StartOffset}}).
 
 create_orders(TotalOrders) ->
   gen_server:call(?SRV, {create_orders, TotalOrders}).
 
-run_orders(RowsPerBatch) ->
-  gen_server:cast(?SRV, {run_orders, RowsPerBatch}).
+run_orders(OrdersPerBatch) ->
+  gen_server:cast(?SRV, {run_orders, OrdersPerBatch}).
 
-next_orders(WorkerPid, Ref, OrdersNextPage, TotalOrdersReceived) ->
-  gen_server:cast(?SRV, {next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceived}).
+next_orders(WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen) ->
+  gen_server:cast(?SRV, {next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen}).
 
 empty_orders() ->
   gen_server:call(?SRV, empty_orders).
