@@ -1,20 +1,16 @@
 -module(oprex_order_manager).
 -behaviour(gen_server).
 
--export([start_link/0, create_workers/2, initiate_order/1, next_order/5]).
+-export([start_link/0, create_workers/3, create_orders/1, run_orders/1, empty_orders/0, next_orders/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(SRV, oprex_order_manager_srv).
--define(WORKER_ARGS, [{dbhost, "localhost"}, {dbname, "dpt_in_da_house"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]).
--define(TOTAL_ROWS, 1000000).
--define(DISTRIBUTE_ROWS_PER_PAGE, 10000).
--define(TOTAL_ORDERS, 10000).
--define(THE_ORDER_ROWS_PER_PAGE, 1000).
 
 % -define(QUERY_STR, <<"SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, ?">>).
+
 -define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
 
--record(state, {procs_pids = [], procs_refs = [], orders = []}).
+-record(state, {procs_pids = [], procs_refs = [], orders = [], rows_per_batch = 0}).
 
 start_link() ->
   gen_server:start_link({local, ?SRV}, ?MODULE, [], []).
@@ -39,41 +35,72 @@ handle_cast({start_oprex_worker_supervisor, {M, F, A}}, State) ->
     ChildSpecs
   ),
 
+  {noreply, State};
+
+handle_cast({run_orders, RowsPerBatch}, #state{orders = OrdersCurrent, procs_pids = WorkersCurrent} = State) ->
+  OrdersSubmit = lists:sublist(OrdersCurrent, 1, RowsPerBatch),
+  lists:foreach(
+    fun(WorkerPid) ->
+      gen_server:cast(WorkerPid, {initial_orders, make_ref(), OrdersSubmit})
+    end,
+    WorkersCurrent
+  ),
+
+  {noreply, State#state{rows_per_batch = RowsPerBatch}};
+
+handle_cast({next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceived}, State) ->
+  #state{orders = OrdersCurrent, rows_per_batch = RowsPerBatch} = State,
+  OrdersCurrentLen = length(OrdersCurrent),
+
+  if
+    TotalOrdersReceived < OrdersCurrentLen ->
+      StartOffset = (RowsPerBatch * OrdersNextPage) + 1,
+      NextOrdersSubmit = lists:sublist(OrdersCurrent, StartOffset, RowsPerBatch),
+
+      gen_server:cast(WorkerPid, {next_order, Ref, NextOrdersSubmit});
+
+    true ->
+      gen_server:cast(WorkerPid, reset_state),
+      io:format("Worker: ~p finish. Total rows received: ~p~n", [WorkerPid, TotalOrdersReceived])
+  end,
+
   {noreply, State}.
 
-% handle_cast({initiate_order, WorkerGroupName}, #state{orders = Orders} = State) ->
-%   TheOrderOffsetStart = (?THE_ORDER_ROWS_PER_PAGE * 0) + 1,
-%   InitialTheOrders = lists:sublist(Orders, TheOrderOffsetStart, ?THE_ORDER_ROWS_PER_PAGE),
-%   distribute_initial_order(1, WorkerGroupName, ?TOTAL_ORDERS, InitialTheOrders),
-
-%   {noreply, State};
-
-% handle_cast({initiate_worker_data, WorkerGroupName, Pages}, #state{conn = DbConn} = State) ->
-%   distribute_data(DbConn, WorkerGroupName, Pages),
-
-%   {noreply, State};
-
-% handle_cast({next_order, WorkerPid, Ref, TheOrderPage, TotalTheOrders, TotalTheOrdersReceived}, State) ->
-%   #state{orders=TheOrders} = State,
-%   TheOrderNextOffsetStart = (?THE_ORDER_ROWS_PER_PAGE * TheOrderPage) + 1,
-
-%   if TotalTheOrdersReceived < TotalTheOrders ->
-%     NextTheOrders = lists:sublist(TheOrders, TheOrderNextOffsetStart, ?THE_ORDER_ROWS_PER_PAGE),
-%     gen_server:cast(WorkerPid, {next_order, Ref, TotalTheOrders, NextTheOrders});
-%   true ->
-%     gen_server:cast(WorkerPid, reset_state),
-%     io:format("Worker: ~p finish. Total rows received: ~p~n", [WorkerPid, TotalTheOrdersReceived])
-%   end,
-
-%   {noreply, State}.
-
-handle_call({create_workers, {TotalRows, RowsPerPage}}, _From, #state{procs_pids = PidsCurrent, procs_refs = RefsCurrent} = State) ->
+handle_call({create_workers, {TotalRows, RowsPerPage, StartOffset}}, _From, #state{procs_pids = PidsCurrent, procs_refs = RefsCurrent} = State) ->
   TotalPages = ceil(TotalRows / RowsPerPage),
-  Pages = lists:seq(0, (TotalPages - 1)),
-  ProcessesNew = [worker_starter(Page, RowsPerPage) || Page <- Pages],
+  ProcessesNew = [worker_starter(Page, RowsPerPage, StartOffset) || Page <- lists:seq(0, TotalPages - 1)],
   {PidsNew, RefsNew} = pids_refs(ProcessesNew),
 
-  {reply, ok, State#state{procs_pids = lists:append([PidsNew, PidsCurrent]), procs_refs = lists:append([RefsNew, RefsCurrent])}}.
+  {reply, ok, State#state{procs_pids = lists:append([PidsNew, PidsCurrent]), procs_refs = lists:append([RefsNew, RefsCurrent])}};
+
+handle_call({create_orders, TotalOrders}, _From, #state{orders = OrdersCurrent} = State) ->
+  if
+    length(OrdersCurrent) < 1 ->
+      {ok, DbCredentials} = application:get_env(dist_procs_je_asane, dbcredentials),
+      DbHost = proplists:get_value(dbhost, DbCredentials),
+      DbName = proplists:get_value(dbname, DbCredentials),
+      DbUser = proplists:get_value(dbuser, DbCredentials),
+      DbPasswd = proplists:get_value(dbpasswd, DbCredentials),
+
+      {ok, DbConn} = mysql:start_link([
+        {host, DbHost},
+        {port, 8889},
+        {user, DbUser},
+        {password, DbPasswd},
+        {database, DbName}
+      ]),
+
+      {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [0, TotalOrders]),
+      ok = mysql:stop(DbConn),
+
+      {reply, {ok, <<"Orders populated">>}, State#state{orders = Rows}};
+
+    true ->
+      {reply, {ok, <<"Orders not empty. Please empty the orders first">>}, State}
+  end;
+
+handle_call(empty_orders, _From, State) ->
+  {reply, {ok, <<"Orders emptied">>}, State#state{orders = []}}.
 
 handle_info({'DOWN', Ref, process, Pid, _}, #state{procs_refs = Refs, procs_pids = Processes} = State) ->
   case lists:member(Ref, Refs) of
@@ -96,11 +123,25 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
 
-create_workers(TotalRows, RowsPerPage) ->
-  gen_server:call(?SRV, {create_workers, {TotalRows, RowsPerPage}}).
+-spec create_workers(TotalRows :: integer(), RowsPerPage :: integer(), StartOffset :: integer()) -> ok.
 
-worker_starter(Page, Limit) ->
-  Offset = Limit * Page,
+create_workers(TotalRows, RowsPerPage, StartOffset) ->
+  gen_server:call(?SRV, {create_workers, {TotalRows, RowsPerPage, StartOffset}}).
+
+create_orders(TotalOrders) ->
+  gen_server:call(?SRV, {create_orders, TotalOrders}).
+
+run_orders(RowsPerBatch) ->
+  gen_server:cast(?SRV, {run_orders, RowsPerBatch}).
+
+next_orders(WorkerPid, Ref, OrdersNextPage, TotalOrdersReceived) ->
+  gen_server:cast(?SRV, {next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceived}).
+
+empty_orders() ->
+  gen_server:call(?SRV, empty_orders).
+
+worker_starter(Page, Limit, StartOffset) ->
+  Offset = (Limit * Page) + StartOffset,
   {ok, Pid} = supervisor:start_child(oprex_worker_supervisor, [Offset, Limit]),
   Ref = erlang:monitor(process, Pid),
 
@@ -114,9 +155,3 @@ pids_refs(ListOfPidsRefs, Pids, Refs) ->
   [Head | Tail] = ListOfPidsRefs,
   {Pid, Ref} = Head,
   pids_refs(Tail, [Pid | Pids], [Ref | Refs]).
-
-initiate_order(WorkerGroupName) ->
-  gen_server:cast(?SRV, {initiate_order, WorkerGroupName}).
-
-next_order(WorkerPid, Ref, TheOrderPage, TotalTheOrders, TotalTheOrdersReceived) ->
-  gen_server:cast(?SRV, {next_order, WorkerPid, Ref, TheOrderPage, TotalTheOrders, TotalTheOrdersReceived}).
