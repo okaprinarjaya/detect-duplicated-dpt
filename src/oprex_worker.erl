@@ -40,22 +40,12 @@ init([Offset, Limit]) ->
 
   {ok, #state{rows = Rows}}.
 
-handle_cast({initial_orders, Ref, OrdersSubmit}, #state{rows = Rows, orders_paging = Page} = State) ->
-  TotalOrdersReceivedNextLen = length(OrdersSubmit),
+handle_cast({run_orders, Ref, OrdersSubmit}, State) ->
+  #state{rows = Rows, total_orders_received = TotalOrdersReceivedLen, orders_paging = Page} = State,
+  TotalOrdersReceivedNextLen = TotalOrdersReceivedLen + length(OrdersSubmit),
   NextPage = Page + 1,
 
   compare(OrdersSubmit, Rows, self()),
-
-  oprex_order_manager:next_orders(self(), Ref, NextPage, TotalOrdersReceivedNextLen),
-
-  {noreply, State#state{orders_paging = NextPage, total_orders_received = TotalOrdersReceivedNextLen}};
-
-handle_cast({next_orders, Ref, NextOrdersSubmit}, State) ->
-  #state{rows = Rows, total_orders_received = TotalOrdersReceivedLen, orders_paging = Page} = State,
-  TotalOrdersReceivedNextLen = TotalOrdersReceivedLen + length(NextOrdersSubmit),
-  NextPage = Page + 1,
-
-  compare(NextOrdersSubmit, Rows, self()),
 
   oprex_order_manager:next_orders(self(), Ref, NextPage, TotalOrdersReceivedNextLen),
 
