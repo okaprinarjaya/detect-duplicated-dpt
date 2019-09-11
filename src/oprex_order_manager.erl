@@ -37,16 +37,15 @@ handle_cast({start_oprex_worker_supervisor, {M, F, A}}, State) ->
 
   {noreply, State};
 
-handle_cast({run_orders, RowsPerBatch}, #state{orders = Orders, procs_pids = Workers} = State) ->
-  OrdersSubmit = lists:sublist(Orders, 1, RowsPerBatch),
+handle_cast({run_orders, OrdersPerBatch}, #state{orders = Orders, procs_pids = Workers} = State) ->
   lists:foreach(
     fun(WorkerPid) ->
-      gen_server:cast(WorkerPid, {initial_orders, make_ref(), OrdersSubmit})
+      gen_server:cast(WorkerPid, {run_orders, make_ref(), lists:sublist(Orders, 1, OrdersPerBatch)})
     end,
     Workers
   ),
 
-  {noreply, State#state{rows_per_batch = RowsPerBatch}};
+  {noreply, State#state{rows_per_batch = OrdersPerBatch}};
 
 handle_cast({next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen}, State) ->
   #state{orders = Orders, orders_len = OrdersLen, rows_per_batch = RowsPerBatch} = State,
@@ -54,9 +53,7 @@ handle_cast({next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen
   if
     TotalOrdersReceivedLen < OrdersLen ->
       StartOffset = (RowsPerBatch * OrdersNextPage) + 1,
-      NextOrdersSubmit = lists:sublist(Orders, StartOffset, RowsPerBatch),
-
-      gen_server:cast(WorkerPid, {next_orders, Ref, NextOrdersSubmit});
+      gen_server:cast(WorkerPid, {run_orders, Ref, lists:sublist(Orders, StartOffset, RowsPerBatch)});
 
     true ->
       gen_server:cast(WorkerPid, reset_state),
@@ -65,7 +62,8 @@ handle_cast({next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen
 
   {noreply, State};
 
-handle_cast({create_workers, {TotalRows, RowsPerPage, StartOffset}}, #state{procs_pids = ProcsPids, procs_refs = ProcsRefs} = State) ->
+handle_cast({create_workers, {TotalRows, RowsPerPage, StartOffset}}, State) ->
+  #state{procs_pids = ProcsPids, procs_refs = ProcsRefs} = State,
   TotalPages = ceil(TotalRows / RowsPerPage),
   ProcessesNew = [worker_starter(Page, RowsPerPage, StartOffset) || Page <- lists:seq(0, TotalPages - 1)],
   {PidsNew, RefsNew} = pids_refs(ProcessesNew),
