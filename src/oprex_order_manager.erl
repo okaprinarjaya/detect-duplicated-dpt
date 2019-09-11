@@ -1,7 +1,7 @@
 -module(oprex_order_manager).
 -behaviour(gen_server).
 
--export([start_link/0, create_workers/3, create_orders/1, run_orders/1, empty_orders/0, next_orders/4]).
+-export([start_link/0, create_workers/3, create_orders/2, run_orders/1, empty_orders/0, next_orders/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(SRV, oprex_order_manager_srv).
@@ -70,7 +70,7 @@ handle_cast({create_workers, {TotalRows, RowsPerPage, StartOffset}}, State) ->
 
   {noreply, State#state{procs_pids = lists:append([PidsNew, ProcsPids]), procs_refs = lists:append([RefsNew, ProcsRefs])}}.
 
-handle_call({create_orders, TotalOrders}, _From, #state{orders = Orders} = State) ->
+handle_call({create_orders, TotalOrders, StartOffset}, _From, #state{orders = Orders} = State) ->
   if
     length(Orders) < 1 ->
       {ok, DbCredentials} = application:get_env(dist_procs_je_asane, dbcredentials),
@@ -87,17 +87,17 @@ handle_call({create_orders, TotalOrders}, _From, #state{orders = Orders} = State
         {database, DbName}
       ]),
 
-      {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [0, TotalOrders]),
+      {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [StartOffset, TotalOrders]),
       ok = mysql:stop(DbConn),
 
-      {reply, {ok, <<"Orders populated">>}, State#state{orders = Rows, orders_len = length(Rows)}};
+      {reply, {ok, "Orders populated"}, State#state{orders = Rows, orders_len = length(Rows)}};
 
     true ->
-      {reply, {ok, <<"Orders not empty. Please empty the orders first">>}, State}
+      {reply, {ok, "Orders not empty. Please empty the orders first"}, State}
   end;
 
 handle_call(empty_orders, _From, State) ->
-  {reply, {ok, <<"Orders emptied">>}, State#state{orders = []}}.
+  {reply, {ok, "Orders emptied"}, State#state{orders = []}}.
 
 handle_info({'DOWN', Ref, process, Pid, _}, #state{procs_refs = Refs, procs_pids = Processes} = State) ->
   case lists:member(Ref, Refs) of
@@ -121,12 +121,13 @@ code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
 
 -spec create_workers(TotalRows :: integer(), RowsPerPage :: integer(), StartOffset :: integer()) -> ok.
-
 create_workers(TotalRows, RowsPerPage, StartOffset) ->
   gen_server:cast(?SRV, {create_workers, {TotalRows, RowsPerPage, StartOffset}}).
 
-create_orders(TotalOrders) ->
-  gen_server:call(?SRV, {create_orders, TotalOrders}).
+-type reply() :: {ok, string()}.
+-spec create_orders(TotalOrders :: integer(), StartOffset :: integer()) -> reply().
+create_orders(TotalOrders, StartOffset) ->
+  gen_server:call(?SRV, {create_orders, TotalOrders, StartOffset}).
 
 run_orders(OrdersPerBatch) ->
   gen_server:cast(?SRV, {run_orders, OrdersPerBatch}).

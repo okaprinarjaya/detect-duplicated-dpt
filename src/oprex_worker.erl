@@ -15,7 +15,7 @@
 
 -define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
 
--record(state, {rows = [], total_orders_received = 0, orders_paging = 0}).
+-record(state, {rows = [], rows_len = 0, total_orders_received = 0, orders_paging = 0}).
 
 start_link(Offset, Limit) ->
   gen_server:start_link(?MODULE, [Offset, Limit], []).
@@ -38,7 +38,7 @@ init([Offset, Limit]) ->
   {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [Offset, Limit]),
   ok = mysql:stop(DbConn),
 
-  {ok, #state{rows = Rows}}.
+  {ok, #state{rows = Rows, rows_len = length(Rows)}}.
 
 handle_cast({run_orders, Ref, OrdersSubmit}, State) ->
   #state{rows = Rows, total_orders_received = TotalOrdersReceivedLen, orders_paging = Page} = State,
