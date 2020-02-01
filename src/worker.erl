@@ -1,4 +1,4 @@
--module(oprex_worker).
+-module(worker).
 -behaviour(gen_server).
 
 -export([start_link/2]).
@@ -11,9 +11,9 @@
   code_change/3
 ]).
 
-% -define(QUERY_STR, <<"SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, ?">>).
+-define(QUERY_STR, <<"SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, ?">>).
 
--define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
+% -define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
 
 -record(state, {rows = [], rows_len = 0, total_orders_received = 0, orders_paging = 0}).
 
@@ -21,7 +21,7 @@ start_link(Offset, Limit) ->
   gen_server:start_link(?MODULE, [Offset, Limit], []).
 
 init([Offset, Limit]) ->
-  {ok, DbCredentials} = application:get_env(dist_procs_je_asane, dbcredentials),
+  {ok, DbCredentials} = application:get_env(detectdouble, dbcredentials),
   DbHost = proplists:get_value(dbhost, DbCredentials),
   DbName = proplists:get_value(dbname, DbCredentials),
   DbUser = proplists:get_value(dbuser, DbCredentials),
@@ -47,7 +47,7 @@ handle_cast({run_orders, Ref, OrdersSubmit}, State) ->
 
   compare(OrdersSubmit, Rows, self()),
 
-  oprex_order_manager:next_orders(self(), Ref, NextPage, TotalOrdersReceivedNextLen),
+  order_manager:next_orders(self(), Ref, NextPage, TotalOrdersReceivedNextLen),
 
   {noreply, State#state{orders_paging = NextPage, total_orders_received = TotalOrdersReceivedNextLen}};
 

@@ -1,4 +1,5 @@
--module(coret_coret).
+-module(scratch_temp).
+
 -compile(export_all).
 
 -define(WORKER_ARGS, [{dbhost, "localhost"}, {dbname, "dpt_in_da_house"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]).

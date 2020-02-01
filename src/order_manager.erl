@@ -1,14 +1,29 @@
--module(oprex_order_manager).
+-module(order_manager).
 -behaviour(gen_server).
 
--export([start_link/0, create_workers/3, create_orders/2, run_orders/1, empty_orders/0, next_orders/4]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+-export([
+  start_link/0,
+  create_workers/3,
+  create_orders/2,
+  run_orders/1,
+  empty_orders/0,
+  next_orders/4]
+).
 
--define(SRV, oprex_order_manager_srv).
+-export([
+  init/1,
+  handle_call/3,
+  handle_cast/2,
+  handle_info/2,
+  terminate/2,
+  code_change/3]
+).
 
-% -define(QUERY_STR, <<"SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, ?">>).
+-define(SRV, order_manager_srv).
 
--define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
+-define(QUERY_STR, <<"SELECT id, nama, status_dpt FROM dpt_pemilihbali LIMIT ?, ?">>).
+
+% -define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
 
 -record(state, {procs_pids = [], procs_refs = [], orders = [], orders_len = 0, rows_per_batch = 0}).
 
@@ -16,26 +31,7 @@ start_link() ->
   gen_server:start_link({local, ?SRV}, ?MODULE, [], []).
 
 init(_Args) ->
-  MFA = {oprex_worker, start_link, []},
-  gen_server:cast(self(), {start_oprex_worker_supervisor, MFA}),
-
   {ok, #state{procs_pids = [], procs_refs = [], orders = []}}.
-
-handle_cast({start_oprex_worker_supervisor, {M, F, A}}, State) ->
-  ChildSpecs = #{
-    id => oprex_worker_supervisor_id,
-    start => {oprex_worker_supervisor, start_link, [{M,F,A}]},
-    restart => temporary,
-    shutdown => 10000,
-    type => supervisor,
-    modules => [oprex_worker_supervisor]
-  },
-  {ok, _Pid} = supervisor:start_child(
-    oprex_supervisor,
-    ChildSpecs
-  ),
-
-  {noreply, State};
 
 handle_cast({run_orders, OrdersPerBatch}, #state{orders = Orders, procs_pids = Workers} = State) ->
   lists:foreach(
@@ -68,12 +64,18 @@ handle_cast({create_workers, {TotalRows, RowsPerPage, StartOffset}}, State) ->
   ProcessesNew = [worker_starter(Page, RowsPerPage, StartOffset) || Page <- lists:seq(0, TotalPages - 1)],
   {PidsNew, RefsNew} = pids_refs(ProcessesNew),
 
-  {noreply, State#state{procs_pids = lists:append([PidsNew, ProcsPids]), procs_refs = lists:append([RefsNew, ProcsRefs])}}.
+  {
+    noreply,
+    State#state{
+      procs_pids = lists:append([PidsNew, ProcsPids]),
+      procs_refs = lists:append([RefsNew, ProcsRefs])
+    }
+  }.
 
 handle_call({create_orders, TotalOrders, StartOffset}, _From, #state{orders = Orders} = State) ->
   if
     length(Orders) < 1 ->
-      {ok, DbCredentials} = application:get_env(dist_procs_je_asane, dbcredentials),
+      {ok, DbCredentials} = application:get_env(detectdouble, dbcredentials),
       DbHost = proplists:get_value(dbhost, DbCredentials),
       DbName = proplists:get_value(dbname, DbCredentials),
       DbUser = proplists:get_value(dbuser, DbCredentials),
@@ -140,7 +142,7 @@ empty_orders() ->
 
 worker_starter(Page, Limit, StartOffset) ->
   Offset = (Limit * Page) + StartOffset,
-  {ok, Pid} = supervisor:start_child(oprex_worker_supervisor, [Offset, Limit]),
+  {ok, Pid} = supervisor:start_child(worker_supervisor, [Offset, Limit]),
   Ref = erlang:monitor(process, Pid),
 
   {Pid, Ref}.

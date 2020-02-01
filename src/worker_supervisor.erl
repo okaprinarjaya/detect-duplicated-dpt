@@ -1,4 +1,4 @@
--module(oprex_worker_supervisor).
+-module(worker_supervisor).
 -behaviour(supervisor).
 
 -export([start_link/1]).
@@ -17,6 +17,6 @@ init({M, F, A}) ->
     period => 10
   },
   ChildSpecs = [
-    {oprex_worker_id, {M, F, A}, temporary, 5000, worker, [M]}
+    {worker_id, {M, F, A}, temporary, 5000, worker, [M]}
   ],
   {ok, {SupFlags, ChildSpecs}}.

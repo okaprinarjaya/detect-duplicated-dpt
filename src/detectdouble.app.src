@@ -1,8 +1,8 @@
-{application, dist_procs_je_asane,
- [{description, "An OTP application"},
+{application, detectdouble,
+ [{description, "An Doubled Data Detection"},
   {vsn, "0.1.0"},
   {registered, []},
-  {mod, {dist_procs_je_asane_app, []}},
+  {mod, {detectdouble_app, []}},
   {
     env,
     [
@@ -22,7 +22,7 @@
     observer
    ]},
   {env,[]},
-  {modules, [oprex_order_manager]},
+  {modules, [order_manager]},
 
   {licenses, ["Apache 2.0"]},
   {links, []}

@@ -1,8 +1,4 @@
 [{<<"mysql">>,
   {git,"https://github.com/mysql-otp/mysql-otp",
        {ref,"9a98eff7a127a5012c45e4b8bd845b0befccf0a9"}},
-  0},
- {<<"poolboy">>,
-  {git,"https://github.com/devinus/poolboy",
-       {ref,"29be47db8c2be38b18c908e43a80ebb7b9b6116b"}},
   0}].
