@@ -24,14 +24,13 @@ init([Offset, Limit]) ->
   {ok, _, Rows} = mysql_poolboy:query(pool1, ?QUERY_STR, [Offset, Limit]),
   {ok, #state{rows = Rows, rows_len = length(Rows)}}.
 
-handle_cast({run_orders, Ref, OrdersSubmit}, State) ->
+handle_cast({worker_run_orders, Ref, OrdersSubmit}, State) ->
   #state{rows = Rows, total_orders_received = TotalOrdersReceivedLen, orders_paging = Page} = State,
   TotalOrdersReceivedNextLen = TotalOrdersReceivedLen + length(OrdersSubmit),
   NextPage = Page + 1,
 
   compare(OrdersSubmit, Rows, self()),
-
-  order_manager:next_orders(self(), Ref, NextPage, TotalOrdersReceivedNextLen),
+  order_manager:next_run_orders(self(), Ref, NextPage, TotalOrdersReceivedNextLen),
 
   {noreply, State#state{orders_paging = NextPage, total_orders_received = TotalOrdersReceivedNextLen}};
 

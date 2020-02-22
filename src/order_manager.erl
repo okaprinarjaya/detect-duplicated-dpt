@@ -5,10 +5,10 @@
   start_link/0,
   create_workers/3,
   create_orders/2,
-  run_orders/1,
-  empty_orders/0,
-  next_orders/4]
-).
+  initial_run_orders/1,
+  next_run_orders/4,
+  empty_orders/0
+]).
 
 -export([
   init/1,
@@ -33,23 +33,23 @@ start_link() ->
 init(_Args) ->
   {ok, #state{procs_pids = [], procs_refs = [], orders = []}}.
 
-handle_cast({run_orders, OrdersPerBatch}, #state{orders = Orders, procs_pids = Workers} = State) ->
+handle_cast({initial_run_orders, OrdersPerBatch}, #state{orders = Orders, procs_pids = Workers} = State) ->
   lists:foreach(
     fun(WorkerPid) ->
-      gen_server:cast(WorkerPid, {run_orders, make_ref(), lists:sublist(Orders, 1, OrdersPerBatch)})
+      gen_server:cast(WorkerPid, {worker_run_orders, make_ref(), lists:sublist(Orders, 1, OrdersPerBatch)})
     end,
     Workers
   ),
 
   {noreply, State#state{rows_per_batch = OrdersPerBatch}};
 
-handle_cast({next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen}, State) ->
+handle_cast({next_run_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen}, State) ->
   #state{orders = Orders, orders_len = OrdersLen, rows_per_batch = RowsPerBatch} = State,
 
   if
     TotalOrdersReceivedLen < OrdersLen ->
       StartOffset = (RowsPerBatch * OrdersNextPage) + 1,
-      gen_server:cast(WorkerPid, {run_orders, Ref, lists:sublist(Orders, StartOffset, RowsPerBatch)});
+      gen_server:cast(WorkerPid, {worker_run_orders, Ref, lists:sublist(Orders, StartOffset, RowsPerBatch)});
 
     true ->
       gen_server:cast(WorkerPid, reset_state),
@@ -115,11 +115,11 @@ create_workers(TotalRows, RowsPerPage, StartOffset) ->
 create_orders(TotalOrders, StartOffset) ->
   gen_server:call(?SRV, {create_orders, TotalOrders, StartOffset}).
 
-run_orders(OrdersPerBatch) ->
-  gen_server:cast(?SRV, {run_orders, OrdersPerBatch}).
+initial_run_orders(OrdersPerBatch) ->
+  gen_server:cast(?SRV, {initial_run_orders, OrdersPerBatch}).
 
-next_orders(WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen) ->
-  gen_server:cast(?SRV, {next_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen}).
+next_run_orders(WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen) ->
+  gen_server:cast(?SRV, {next_run_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen}).
 
 empty_orders() ->
   gen_server:call(?SRV, empty_orders).
