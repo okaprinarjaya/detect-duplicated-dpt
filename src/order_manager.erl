@@ -75,23 +75,7 @@ handle_cast({create_workers, {TotalRows, RowsPerPage, StartOffset}}, State) ->
 handle_call({create_orders, TotalOrders, StartOffset}, _From, #state{orders = Orders} = State) ->
   if
     length(Orders) < 1 ->
-      {ok, DbCredentials} = application:get_env(detectdouble, dbcredentials),
-      DbHost = proplists:get_value(dbhost, DbCredentials),
-      DbName = proplists:get_value(dbname, DbCredentials),
-      DbUser = proplists:get_value(dbuser, DbCredentials),
-      DbPasswd = proplists:get_value(dbpasswd, DbCredentials),
-
-      {ok, DbConn} = mysql:start_link([
-        {host, DbHost},
-        {port, 8889},
-        {user, DbUser},
-        {password, DbPasswd},
-        {database, DbName}
-      ]),
-
-      {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [StartOffset, TotalOrders]),
-      ok = mysql:stop(DbConn),
-
+      {ok, _, Rows} = mysql_poolboy:query(pool1, ?QUERY_STR, [StartOffset, TotalOrders]),
       {reply, {ok, "Orders populated"}, State#state{orders = Rows, orders_len = length(Rows)}};
 
     true ->

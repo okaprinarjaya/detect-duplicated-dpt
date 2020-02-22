@@ -21,23 +21,7 @@ start_link(Offset, Limit) ->
   gen_server:start_link(?MODULE, [Offset, Limit], []).
 
 init([Offset, Limit]) ->
-  {ok, DbCredentials} = application:get_env(detectdouble, dbcredentials),
-  DbHost = proplists:get_value(dbhost, DbCredentials),
-  DbName = proplists:get_value(dbname, DbCredentials),
-  DbUser = proplists:get_value(dbuser, DbCredentials),
-  DbPasswd = proplists:get_value(dbpasswd, DbCredentials),
-
-  {ok, DbConn} = mysql:start_link([
-    {host, DbHost},
-    {port, 8889},
-    {user, DbUser},
-    {password, DbPasswd},
-    {database, DbName}
-  ]),
-
-  {ok, _, Rows} = mysql:query(DbConn, ?QUERY_STR, [Offset, Limit]),
-  ok = mysql:stop(DbConn),
-
+  {ok, _, Rows} = mysql_poolboy:query(pool1, ?QUERY_STR, [Offset, Limit]),
   {ok, #state{rows = Rows, rows_len = length(Rows)}}.
 
 handle_cast({run_orders, Ref, OrdersSubmit}, State) ->
@@ -69,23 +53,23 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
 
-compare(Orders, Rows, Pid) ->
+compare(Orders, SourcesCompare, Pid) ->
   lists:foreach(
     fun(Order) ->
       [_, OrderNama, _] = Order,
       lists:foreach(
-        fun(Row) ->
-          [_, RowNama, _] = Row,
+        fun(SourceRow) ->
+          [_, SourceRowNama, _] = SourceRow,
 
           if
-            OrderNama =/= <<>> andalso RowNama =/= <<>> andalso OrderNama =/= RowNama  ->
-              CompareLen = binary:longest_common_prefix([OrderNama, RowNama]),
-              BLen = byte_size(RowNama),
+            OrderNama =/= <<>> andalso SourceRowNama =/= <<>> andalso OrderNama =/= SourceRowNama  ->
+              CompareLen = binary:longest_common_prefix([OrderNama, SourceRowNama]),
+              BLen = byte_size(SourceRowNama),
               Similarity = (CompareLen / BLen) * 100,
 
               if
                 Similarity > 90 ->
-                  io:format("Double data detected! - (~p) is similar with (~p) found at: ~p~n", [OrderNama, RowNama, Pid]);
+                  io:format("Double data detected! - (~p) is similar with (~p) found at: ~p~n", [OrderNama, SourceRowNama, Pid]);
                 true -> ok
               end;
 
@@ -93,7 +77,7 @@ compare(Orders, Rows, Pid) ->
           end
 
         end,
-        Rows
+        SourcesCompare
       )
     end,
     Orders

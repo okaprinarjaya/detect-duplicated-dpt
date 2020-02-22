@@ -1,0 +1,8 @@
+[
+  {mysql_poolboy, [
+    {pool1, {
+      [{size, 10}, {max_overflow, 20}],
+      [{user, "mamp"}, {password, "12qwaszx@321"}, {database, "dpt_in_da_house"}, {host, "localhost"}, {port, 8889}]
+    }}
+  ]}
+].

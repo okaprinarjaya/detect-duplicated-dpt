@@ -18,6 +18,7 @@
     sasl,
     crypto,
     ssl,
+    mysql_poolboy,
     wx,
     observer
    ]},
