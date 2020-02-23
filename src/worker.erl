@@ -1,7 +1,7 @@
 -module(worker).
 -behaviour(gen_server).
 
--export([start_link/2]).
+-export([start_link/2, compare2/3, compare/3]).
 -export([
   init/1,
   handle_call/3,
@@ -29,8 +29,9 @@ handle_cast({worker_run_orders, Ref, OrdersSubmit}, State) ->
   TotalOrdersReceivedNextLen = TotalOrdersReceivedLen + length(OrdersSubmit),
   NextPage = Page + 1,
 
-  compare(OrdersSubmit, Rows, self()),
-  order_manager:next_run_orders(self(), Ref, NextPage, TotalOrdersReceivedNextLen),
+  % compare2(OrdersSubmit, Rows, self()),
+  {MicrosecondsTime, _Value} = timer:tc(worker, compare2, [OrdersSubmit, Rows, self()]),
+  order_manager:next_run_orders(self(), Ref, NextPage, TotalOrdersReceivedNextLen, MicrosecondsTime),
 
   {noreply, State#state{orders_paging = NextPage, total_orders_received = TotalOrdersReceivedNextLen}};
 
@@ -52,13 +53,49 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
 
-compare(Orders, SourcesCompare, Pid) ->
+compare2(Orders, SourcesCompare, Pid) ->
+  iterate(Orders, SourcesCompare, Pid).
+
+iterate([], _, _) ->
+  ok;
+iterate(ListOrders, ListSourcesCompare, Pid) ->
+  [HeadOrder | ListTailOrders] = ListOrders,
+  [_, SingleOrderNama, _] = HeadOrder,
+  iterate_compare(SingleOrderNama, ListSourcesCompare, Pid),
+  iterate(ListTailOrders, ListSourcesCompare, Pid).
+
+iterate_compare(_, [], _) -> ok;
+iterate_compare(SingleOrderNama, ListSourcesCompare, Pid) ->
+  [HeadSourcesCompare | ListTailSourcesCompare] = ListSourcesCompare,
+  [SourceRowId, SourceRowNama, _] = HeadSourcesCompare,
+
+  if
+    SingleOrderNama =/= <<>> andalso SourceRowNama =/= <<>> andalso SingleOrderNama =/= SourceRowNama  ->
+      CompareLen = binary:longest_common_prefix([SingleOrderNama, SourceRowNama]),
+      BLen = byte_size(SourceRowNama),
+      Similarity = (CompareLen / BLen) * 100,
+
+      if
+        Similarity > 90 ->
+          ets:insert(ets_suspicious, {SourceRowId});
+          % io:format(
+          %   "Double data detected! - (~p) is similar with (~p) found at: ~p~n",
+          %   [SingleOrderNama, SourceRowNama, Pid]
+          % );
+        true -> ok
+      end;
+
+    true -> ok
+  end,
+  iterate_compare(SingleOrderNama, ListTailSourcesCompare, Pid).
+
+compare(Orders, SourcesCompare, _Pid) ->
   lists:foreach(
     fun(Order) ->
       [_, OrderNama, _] = Order,
       lists:foreach(
         fun(SourceRow) ->
-          [_, SourceRowNama, _] = SourceRow,
+          [SourceRowId, SourceRowNama, _] = SourceRow,
 
           if
             OrderNama =/= <<>> andalso SourceRowNama =/= <<>> andalso OrderNama =/= SourceRowNama  ->
@@ -68,7 +105,11 @@ compare(Orders, SourcesCompare, Pid) ->
 
               if
                 Similarity > 90 ->
-                  io:format("Double data detected! - (~p) is similar with (~p) found at: ~p~n", [OrderNama, SourceRowNama, Pid]);
+                  ets:insert(ets_suspicious, {SourceRowId});
+                  % io:format(
+                  %   "Double data detected! - (~p) is similar with (~p) found at: ~p~n",
+                  %   [OrderNama, SourceRowNama, Pid]
+                  % );
                 true -> ok
               end;
 

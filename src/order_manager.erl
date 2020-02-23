@@ -6,7 +6,7 @@
   create_workers/3,
   create_orders/2,
   initial_run_orders/1,
-  next_run_orders/4,
+  next_run_orders/5,
   empty_orders/0
 ]).
 
@@ -25,13 +25,23 @@
 
 % -define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
 
--record(state, {procs_pids = [], procs_refs = [], orders = [], orders_len = 0, rows_per_batch = 0}).
+-record(state, {
+  ets_id,
+  procs_pids = [],
+  procs_refs = [],
+  procs_finish_count = 0,
+  procs_running_time,
+  orders = [],
+  orders_len = 0,
+  rows_per_batch = 0
+}).
 
 start_link() ->
   gen_server:start_link({local, ?SRV}, ?MODULE, [], []).
 
 init(_Args) ->
-  {ok, #state{procs_pids = [], procs_refs = [], orders = []}}.
+  EtsId = ets:new(ets_suspicious, [set, public, named_table, {write_concurrency, true}]),
+  {ok, #state{ets_id = EtsId, procs_pids = [], procs_refs = [], orders = []}}.
 
 handle_cast({initial_run_orders, OrdersPerBatch}, #state{orders = Orders, procs_pids = Workers} = State) ->
   lists:foreach(
@@ -41,36 +51,67 @@ handle_cast({initial_run_orders, OrdersPerBatch}, #state{orders = Orders, procs_
     Workers
   ),
 
-  {noreply, State#state{rows_per_batch = OrdersPerBatch}};
+  {noreply, State#state{
+    rows_per_batch = OrdersPerBatch,
+    procs_running_time = dict:from_list(lists:map(fun(Pid) -> {Pid, 0} end, Workers))
+  }};
 
-handle_cast({next_run_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen}, State) ->
-  #state{orders = Orders, orders_len = OrdersLen, rows_per_batch = RowsPerBatch} = State,
+handle_cast({next_run_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen, RunningTime}, State) ->
+  #state{
+    orders = Orders,
+    orders_len = OrdersLen,
+    rows_per_batch = RowsPerBatch,
+    procs_pids = ProcsPids,
+    procs_finish_count = ProcsFinishCount,
+    procs_running_time = ProcsRunningTime
+  } = State,
 
   if
     TotalOrdersReceivedLen < OrdersLen ->
       StartOffset = (RowsPerBatch * OrdersNextPage) + 1,
-      gen_server:cast(WorkerPid, {worker_run_orders, Ref, lists:sublist(Orders, StartOffset, RowsPerBatch)});
+      gen_server:cast(WorkerPid, {worker_run_orders, Ref, lists:sublist(Orders, StartOffset, RowsPerBatch)}),
+
+      {noreply, State#state{
+        procs_running_time = dict:update_counter(WorkerPid, RunningTime, ProcsRunningTime)
+      }};
 
     true ->
-      gen_server:cast(WorkerPid, reset_state),
-      io:format("Worker: ~p finish. Total rows received: ~p~n", [WorkerPid, TotalOrdersReceivedLen])
-  end,
+      NumberOfProcs = length(ProcsPids),
+      if
+        ProcsFinishCount < NumberOfProcs ->
+          gen_server:cast(WorkerPid, reset_state),
 
-  {noreply, State};
+          io:format(
+            "Worker: ~p finish. Total rows received: ~p. Running time: ~p~n",
+            [WorkerPid, TotalOrdersReceivedLen, dict:fetch(WorkerPid, ProcsRunningTime)]
+          ),
 
-handle_cast({create_workers, {TotalRows, RowsPerPage, StartOffset}}, State) ->
+          ProcsFinishCountNew = ProcsFinishCount + 1,
+          if
+            ProcsFinishCountNew =:= NumberOfProcs ->
+              io:format("~nALL Workers finished.~n"),
+              update_mysql_db();
+            true -> ok
+          end,
+
+          {noreply, State#state{procs_finish_count = ProcsFinishCountNew}}
+      end
+  end.
+
+handle_call({create_workers, {TotalRows, RowsPerPage, StartOffset}}, _From, State) ->
   #state{procs_pids = ProcsPids, procs_refs = ProcsRefs} = State,
   TotalPages = ceil(TotalRows / RowsPerPage),
   ProcessesNew = [worker_starter(Page, RowsPerPage, StartOffset) || Page <- lists:seq(0, TotalPages - 1)],
   {PidsNew, RefsNew} = pids_refs(ProcessesNew),
 
   {
-    noreply,
+    reply,
+    {ok, "Workers created"},
     State#state{
       procs_pids = lists:append([PidsNew, ProcsPids]),
       procs_refs = lists:append([RefsNew, ProcsRefs])
     }
-  }.
+  };
 
 handle_call({create_orders, TotalOrders, StartOffset}, _From, #state{orders = Orders} = State) ->
   if
@@ -108,7 +149,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 -spec create_workers(TotalRows :: integer(), RowsPerPage :: integer(), StartOffset :: integer()) -> ok.
 create_workers(TotalRows, RowsPerPage, StartOffset) ->
-  gen_server:cast(?SRV, {create_workers, {TotalRows, RowsPerPage, StartOffset}}).
+  gen_server:call(?SRV, {create_workers, {TotalRows, RowsPerPage, StartOffset}}).
 
 -type reply() :: {ok, string()}.
 -spec create_orders(TotalOrders :: integer(), StartOffset :: integer()) -> reply().
@@ -116,10 +157,14 @@ create_orders(TotalOrders, StartOffset) ->
   gen_server:call(?SRV, {create_orders, TotalOrders, StartOffset}).
 
 initial_run_orders(OrdersPerBatch) ->
+  io:format("~nProcessing data started.~n~n"),
   gen_server:cast(?SRV, {initial_run_orders, OrdersPerBatch}).
 
-next_run_orders(WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen) ->
-  gen_server:cast(?SRV, {next_run_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen}).
+next_run_orders(WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen, RunningTime) ->
+  gen_server:cast(?SRV, {
+    next_run_orders,
+    WorkerPid, Ref, OrdersNextPage, TotalOrdersReceivedLen, RunningTime
+  }).
 
 empty_orders() ->
   gen_server:call(?SRV, empty_orders).
@@ -139,3 +184,17 @@ pids_refs(ListOfPidsRefs, Pids, Refs) ->
   [Head | Tail] = ListOfPidsRefs,
   {Pid, Ref} = Head,
   pids_refs(Tail, [Pid | Pids], [Ref | Refs]).
+
+update_mysql_db() ->
+  io:format("Updating MySQL Db...~n"),
+
+  EtsRows = ets:match(ets_suspicious, '$1'),
+  Ids = [update_row(Row) || Row <- EtsRows],
+
+  io:format("Updating MySQL Db done!~n"),
+  io:format("Updated Ids: ~p~n~n", [Ids]).
+
+update_row(Row) ->
+  [{Id}] = Row,
+  Status = mysql_poolboy:query(pool1, <<"UPDATE dpt_pemilihbali SET status_dpt = 'Y' WHERE id=?">>, [Id]),
+  {Status, Id}.
