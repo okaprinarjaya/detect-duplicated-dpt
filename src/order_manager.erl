@@ -63,7 +63,7 @@ handle_cast({next_run_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceive
     rows_per_batch = RowsPerBatch,
     procs_pids = ProcsPids,
     procs_finish_count = ProcsFinishCount,
-    procs_running_time = ProcsRunningTime
+    procs_running_time = ProcsRunningTimeDict
   } = State,
 
   if
@@ -72,29 +72,39 @@ handle_cast({next_run_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceive
       gen_server:cast(WorkerPid, {worker_run_orders, Ref, lists:sublist(Orders, StartOffset, RowsPerBatch)}),
 
       {noreply, State#state{
-        procs_running_time = dict:update_counter(WorkerPid, RunningTime, ProcsRunningTime)
+        procs_running_time = dict:update_counter(WorkerPid, RunningTime, ProcsRunningTimeDict)
       }};
 
     true ->
+      gen_server:cast(WorkerPid, reset_state),
+
       NumberOfProcs = length(ProcsPids),
+      ProcsRunningTimeDictNew = dict:update_counter(WorkerPid, RunningTime, ProcsRunningTimeDict),
+      ProcsRunningTimeCountNew = dict:fetch(WorkerPid, ProcsRunningTimeDictNew),
+
+      io:format(
+        "Worker: ~p finish. Total rows received: ~p. Running time: ~p~n",
+        [WorkerPid, TotalOrdersReceivedLen, ProcsRunningTimeCountNew]
+      ),
+
+      ProcsFinishCountNew = ProcsFinishCount + 1,
       if
-        ProcsFinishCount < NumberOfProcs ->
-          gen_server:cast(WorkerPid, reset_state),
+        ProcsFinishCountNew =:= NumberOfProcs ->
+          io:format("~nALL Workers finished.~n"),
 
-          io:format(
-            "Worker: ~p finish. Total rows received: ~p. Running time: ~p~n",
-            [WorkerPid, TotalOrdersReceivedLen, dict:fetch(WorkerPid, ProcsRunningTime)]
-          ),
+          update_mysql_db(),
+          ets:delete_all_objects(ets_suspicious),
 
-          ProcsFinishCountNew = ProcsFinishCount + 1,
-          if
-            ProcsFinishCountNew =:= NumberOfProcs ->
-              io:format("~nALL Workers finished.~n"),
-              update_mysql_db();
-            true -> ok
-          end,
+          {noreply, State#state{
+            procs_finish_count = 0,
+            procs_running_time = ProcsRunningTimeDictNew
+          }};
 
-          {noreply, State#state{procs_finish_count = ProcsFinishCountNew}}
+        true ->
+          {noreply, State#state{
+            procs_finish_count = ProcsFinishCountNew,
+            procs_running_time = ProcsRunningTimeDictNew
+          }}
       end
   end.
 
