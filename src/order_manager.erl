@@ -199,12 +199,15 @@ update_mysql_db() ->
   io:format("Updating MySQL Db...~n"),
 
   EtsRows = ets:match(ets_suspicious, '$1'),
-  Ids = [update_row(Row) || Row <- EtsRows],
-
-  io:format("Updating MySQL Db done!~n"),
-  io:format("Updated Ids: ~p~n~n", [Ids]).
+  _Ids = [update_row(Row) || Row <- EtsRows],
+  io:format("Updating MySQL Db done!~n").
+  % io:format("Updated Ids: ~p~n~n", [Ids]).
 
 update_row(Row) ->
   [{Id}] = Row,
-  Status = mysql_poolboy:query(pool1, <<"UPDATE dpt_pemilihbali SET status_dpt = 'Y' WHERE id=?">>, [Id]),
+  Status = mysql_poolboy:query(
+    pool1,
+    <<"UPDATE dpt_pemilihbali SET status_dpt = 'CURIGA GANDA' WHERE id=?">>,
+    [Id]
+  ),
   {Status, Id}.

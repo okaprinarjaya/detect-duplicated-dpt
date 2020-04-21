@@ -60,31 +60,33 @@ iterate([], _, _) ->
   ok;
 iterate(ListOrders, ListSourcesCompare, Pid) ->
   [HeadOrder | ListTailOrders] = ListOrders,
-  [_, SingleOrderNama, _] = HeadOrder,
-  iterate_compare(SingleOrderNama, ListSourcesCompare, Pid),
+  [SingleRowId, SingleOrderNama, _] = HeadOrder,
+  iterate_compare(SingleRowId, SingleOrderNama, ListSourcesCompare, Pid),
   iterate(ListTailOrders, ListSourcesCompare, Pid).
 
-iterate_compare(_, [], _) -> ok;
-iterate_compare(SingleOrderNama, ListSourcesCompare, Pid) ->
+iterate_compare(_, _, [], _) -> ok;
+iterate_compare(SingleRowId, SingleOrderNama, ListSourcesCompare, Pid) ->
   [HeadSourcesCompare | ListTailSourcesCompare] = ListSourcesCompare,
   [SourceRowId, SourceRowNama, _] = HeadSourcesCompare,
 
   if
-    SingleOrderNama =/= <<>> andalso SourceRowNama =/= <<>> andalso SingleOrderNama =/= SourceRowNama  ->
-      CompareLen = binary:longest_common_prefix([SingleOrderNama, SourceRowNama]),
-      BLen = byte_size(SourceRowNama),
+    SingleOrderNama =/= <<>> andalso SourceRowNama =/= <<>> andalso SingleRowId =/= SourceRowId  ->
+      SingleOrderNamaStr = binary_to_list(SingleOrderNama),
+      SourceRowNamaStr = binary_to_list(SourceRowNama),
+      CompareLen = someone_lcs:someone_lcs(SingleOrderNamaStr, SourceRowNamaStr),
+      BLen = length(SourceRowNamaStr),
       Similarity = (CompareLen / BLen) * 100,
 
       if
         Similarity > 90 ->
           ets:insert(ets_suspicious, {SourceRowId});
           % io:format(
-          %   "Double data detected! - (~p) is similar with (~p) found at: ~p~n",
-          %   [SingleOrderNama, SourceRowNama, Pid]
+          %   "Double data detected! - (~p) is similar with (~p), similarity: ~p found at: ~p~n",
+          %   [SingleOrderNama, SourceRowNama, Similarity, Pid]
           % );
         true -> ok
       end;
 
     true -> ok
   end,
-  iterate_compare(SingleOrderNama, ListTailSourcesCompare, Pid).
+  iterate_compare(SingleRowId, SingleOrderNama, ListTailSourcesCompare, Pid).

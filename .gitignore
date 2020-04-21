@@ -6,6 +6,7 @@ _*
 *.plt
 *.swp
 *.swo
+*.so
 .erlang.cookie
 ebin
 log
@@ -14,6 +15,7 @@ erl_crash.dump
 logs
 _build
 .idea
+.vscode
 *.iml
 rebar3.crashdump
 *~

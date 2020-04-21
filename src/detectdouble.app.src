@@ -8,7 +8,7 @@
     [
       {
         dbcredentials,
-        [{dbhost, "localhost"}, {dbname, "dpt_in_da_house"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]
+        [{dbhost, "localhost"}, {dbname, "pepenk"}, {dbuser, "mamp"}, {dbpasswd, "12qwaszx@321"}]
       }
     ]
   },
