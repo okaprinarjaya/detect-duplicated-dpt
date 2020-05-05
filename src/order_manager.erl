@@ -26,7 +26,6 @@
 % -define(QUERY_STR, <<"SELECT 1 AS id, CONCAT(transaksi_id, ' ', kuesioner_id, ' ', pilihan_jawaban_id, ' ', pilihan_lain) AS nama, 3 AS status_dpt FROM data_masuk ORDER BY transaksi_id ASC LIMIT ?, ?">>).
 
 -record(state, {
-  ets_id,
   procs_pids = [],
   procs_refs = [],
   procs_finish_count = 0,
@@ -40,8 +39,9 @@ start_link() ->
   gen_server:start_link({local, ?SRV}, ?MODULE, [], []).
 
 init(_Args) ->
-  EtsId = ets:new(ets_suspicious, [set, public, named_table, {write_concurrency, true}]),
-  {ok, #state{ets_id = EtsId, procs_pids = [], procs_refs = [], orders = []}}.
+  ets:new(ets_suspicious, [set, public, named_table, {write_concurrency, true}]),
+  ets:new(ets_finish_workers, [set, protected, named_table, {write_concurrency, true}]),
+  {ok, #state{procs_pids = [], procs_refs = [], orders = []}}.
 
 handle_cast({initial_run_orders, OrdersPerBatch}, #state{orders = Orders, procs_pids = Workers} = State) ->
   lists:foreach(
@@ -82,6 +82,12 @@ handle_cast({next_run_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceive
       ProcsRunningTimeDictNew = dict:update_counter(WorkerPid, RunningTime, ProcsRunningTimeDict),
       ProcsRunningTimeCountNew = dict:fetch(WorkerPid, ProcsRunningTimeDictNew),
 
+      LineWorkerFinishLog = [
+      "Worker: ", pid_to_list(WorkerPid), " finish. ", "Total rows received: ",
+      TotalOrdersReceivedLen, ". Running time: ", ProcsRunningTimeCountNew, "\n"
+      ],
+      ets:insert(ets_finish_workers, {WorkerPid, lists:concat(LineWorkerFinishLog)}),
+
       io:format(
         "Worker: ~p finish. Total rows received: ~p. Running time: ~p~n",
         [WorkerPid, TotalOrdersReceivedLen, ProcsRunningTimeCountNew]
@@ -92,8 +98,10 @@ handle_cast({next_run_orders, WorkerPid, Ref, OrdersNextPage, TotalOrdersReceive
         ProcsFinishCountNew =:= NumberOfProcs ->
           io:format("~nALL Workers finished.~n"),
 
+          write_finish_workers_log("/Users/okaprinarjaya/Oprek/Erlang-Oprek-Dua/tmp/workers-log.txt"),
           update_mysql_db(),
           ets:delete_all_objects(ets_suspicious),
+          ets:delete_all_objects(ets_finish_workers),
 
           {noreply, State#state{
             procs_finish_count = 0,
@@ -211,3 +219,8 @@ update_row(Row) ->
     [Id]
   ),
   {Status, Id}.
+
+write_finish_workers_log(Filename) ->
+  EtsRows = ets:match(ets_finish_workers, '$1'),
+  Lines = lists:map(fun (Line) -> [{_, Log}] = Line, Log end, EtsRows),
+  file:write_file(Filename, Lines).
