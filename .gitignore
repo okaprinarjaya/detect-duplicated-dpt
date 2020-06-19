@@ -1,23 +1,12 @@
-.rebar3
-_*
-.eunit
-*.o
-*.beam
-*.plt
-*.swp
-*.swo
-*.so
-.erlang.cookie
-ebin
-log
-erl_crash.dump
-.rebar
-logs
-_build
-.idea
-.vscode
-*.iml
-rebar3.crashdump
-*~
+# IDE Files
+#-------------------------
+/nbproject/
+.idea/*
 
-src/scratch_temp.erl
+## Sublime Text cache files
+*.tmlanguage.cache
+*.tmPreferences.cache
+*.stTheme.cache
+*.sublime-workspace
+*.sublime-project
+
